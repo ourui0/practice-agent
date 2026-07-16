@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "edu-exam-agent"
+version = "0.1.0"
+description = "面向教师的 AI 智能出题与试卷生成 Windows 桌面应用"
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+  "PySide6>=6.8,<7",
+  "SQLAlchemy>=2.0,<3",
+  "pydantic>=2.9,<3",
+  "pypdf>=5,<7",
+  "pypdfium2>=4.30,<5",
+  "python-docx>=1.1,<2",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3,<9",
+  "pytest-cov>=6,<7",
+  "ruff>=0.8,<1",
+]
+
+[project.gui-scripts]
+edu-exam-agent = "edu_exam_agent.app.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

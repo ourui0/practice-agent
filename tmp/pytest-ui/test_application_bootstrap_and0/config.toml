@@ -1,0 +1,17 @@
+[app]
+name = "EduExam Agent"
+language = "zh_CN"
+theme = "system"
+
+[storage]
+# 留空时使用 %APPDATA%/EduExamAgent
+data_dir = ""
+
+[logging]
+level = "INFO"
+max_bytes = 5242880
+backup_count = 5
+
+[database]
+filename = "edu_exam_agent.db"
+
