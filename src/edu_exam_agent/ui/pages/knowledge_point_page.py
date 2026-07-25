@@ -82,7 +82,7 @@ class KnowledgePointPage(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(32, 26, 32, 26)
         title = QLabel("知识点管理")
-        title.setStyleSheet("font-size: 24px; font-weight: 600;")
+        title.setObjectName("pageTitle")
         layout.addWidget(title)
         toolbar = QHBoxLayout()
         toolbar.addWidget(QLabel("课程"))

@@ -10,10 +10,16 @@ from pydantic import ValidationError
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
+from edu_exam_agent.application.services.document_service import DocumentService
 from edu_exam_agent.application.services.question_scoring import (
     QuestionScoreInput,
     calculate_question_score,
+    calibrate_question_difficulty,
     evaluate_question,
+)
+from edu_exam_agent.application.services.question_similarity import (
+    DuplicateMatch,
+    QuestionSimilarityService,
 )
 from edu_exam_agent.domain.schemas import GeneratedQuestion
 from edu_exam_agent.infrastructure.database.models import (
@@ -50,6 +56,9 @@ class GenerationResult:
     issues: tuple[str, ...]
     evidence: tuple[SearchResult, ...]
     figure_png: bytes | None = None
+    requested_difficulty: int = 0
+    calibrated_difficulty: int = 0
+    duplicate_matches: tuple[DuplicateMatch, ...] = ()
 
 
 class QuestionGenerationAgent:
@@ -63,8 +72,11 @@ class QuestionGenerationAgent:
         self._retriever = retriever
         self._provider = provider
         self._model_name = model_name
+        self._similarity = QuestionSimilarityService(engine)
 
     def generate(self, request: GenerationRequest) -> GenerationResult:
+        if request.document_id is not None:
+            DocumentService(self._engine).assert_ready_for_generation(request.document_id)
         evidence = self._retriever.search(
             request.knowledge_point,
             request.course_id,
@@ -97,12 +109,25 @@ class QuestionGenerationAgent:
             '"segments":[{"start":"A","end":"B","dashed":false}],'
             '"show_axes":false,"caption":""}。所有线段端点必须出现在points中。'
             "题干引用‘如图、图中、示意图’时diagram绝对不能为null。"
+            "难度必须由真实解题思维决定，不能靠增加计算量或把difficulty字段写成5伪装。"
+            "第五档题目必须至少包含两项高阶特征（辅助线或图形转化、参数、动点、"
+            "最值、存在性、分类讨论、范围筛选、证明构造等），至少三层有效推理，"
+            "不得直接套用单一公式，解析必须明确写出关键转折。"
         )
+        avoidance = self._similarity.avoidance_context(request.course_id)
         user_prompt = (
             f"知识点：{request.knowledge_point}\n题型：{request.question_type}\n"
             f"难度：{request.difficulty}\n分值：{request.score}\n教材依据：\n{context}"
         )
+        if avoidance:
+            user_prompt += f"\n\n去重要求：\n{avoidance}"
         question = None
+        evaluation = None
+        calibration = None
+        matches: tuple[DuplicateMatch, ...] = ()
+        issues: list[str] = []
+        boundary_passed = False
+        rejection_reason = "模型未返回有效题目"
         for _attempt in range(3):
             try:
                 payload = self._provider.generate_json(system_prompt, user_prompt)
@@ -117,15 +142,68 @@ class QuestionGenerationAgent:
                     f"模型返回的题目格式不完整（字段：{fields}），请重新生成；"
                     "若反复出现，请更换模型或检查模型是否支持 JSON 输出。"
                 ) from exc
-            if not self._references_missing_figure(question):
-                break
-            user_prompt += "\n上一次题目依赖未提供的图片。请重新生成完全不需要配图的题目。"
-            question = None
-        if question is None:
-            raise ValueError("模型连续生成了依赖配图的题目，已拒绝保存；请重新生成")
-        issues = self._quality_issues(question, request, bool(evidence))
-        boundary_passed = bool(evidence) and request.knowledge_point in question.knowledge_points
-        evaluation = evaluate_question(question, len(evidence), boundary_passed, issues)
+            if self._references_missing_figure(question):
+                rejection_reason = "题目依赖未提供的图片"
+                user_prompt += "\n上一次题目依赖未提供的图片。请重新生成完全不需要配图的题目。"
+                question = None
+                continue
+            issues = self._quality_issues(question, request, bool(evidence))
+            boundary_passed = (
+                bool(evidence) and request.knowledge_point in question.knowledge_points
+            )
+            evaluation = evaluate_question(question, len(evidence), boundary_passed, issues)
+            calibration = calibrate_question_difficulty(question, evaluation)
+            if request.difficulty == 5 and not calibration.meets_requested:
+                rejection_reason = "第五档难度未达标：" + "；".join(calibration.reasons)
+                user_prompt += (
+                    "\n上一次题目未达到第五档，不能只增加数字运算。请更换解题模型并重写。"
+                    f"系统反馈：{'；'.join(calibration.reasons)}。"
+                )
+                question = None
+                continue
+            matches = self._similarity.analyze_candidate(request.course_id, question, limit=3)
+            closest = matches[0] if matches else None
+            if closest is not None and closest.breakdown.level in {"duplicate", "high"}:
+                rejection_reason = (
+                    f"与题目{closest.question_id}高度相似"
+                    f"（{closest.breakdown.total:.0%}）"
+                )
+                tag_text = "、".join(closest.shared_model_tags) or "解题结构"
+                user_prompt += (
+                    f"\n上一次题目与历史题目“{closest.stem[:80]}”高度相似，"
+                    f"相似母题/结构：{tag_text}。必须更换母题、核心条件和解题路径，"
+                    "不能只替换数字、点名称、选项顺序或生活背景。"
+                )
+                question = None
+                continue
+            if (
+                closest is not None
+                and closest.breakdown.level == "warning"
+                and self._ai_confirms_duplicate(question, closest)
+            ):
+                rejection_reason = (
+                    f"AI复核确认与题目{closest.question_id}属于同一母题"
+                )
+                user_prompt += (
+                    f"\n上一次题目经复核与“{closest.stem[:80]}”属于同一母题。"
+                    "请更换核心模型与解题转折后重新生成。"
+                )
+                question = None
+                continue
+            break
+        if question is None or evaluation is None or calibration is None:
+            raise ValueError(
+                f"连续3次生成均未通过质量与查重检查：{rejection_reason}；已拒绝保存"
+            )
+        warning_match = next(
+            (match for match in matches if match.breakdown.level == "warning"), None
+        )
+        if warning_match is not None:
+            issues.append(
+                f"与题目{warning_match.question_id}存在相似提示"
+                f"（{warning_match.breakdown.total:.0%}）"
+            )
+        question = question.model_copy(update={"difficulty": calibration.level})
         quality_score = evaluation.quality_score
         recommendation = calculate_question_score(
             QuestionScoreInput(quality_score, question.difficulty, request.difficulty)
@@ -146,6 +224,14 @@ class QuestionGenerationAgent:
             figure_png,
             evaluation,
         )
+        self._similarity.persist_metadata(
+            question_id,
+            request.difficulty,
+            calibration.level,
+            calibration.features,
+            calibration.reasons,
+            matches,
+        )
         return GenerationResult(
             question_id,
             question,
@@ -155,7 +241,33 @@ class QuestionGenerationAgent:
             tuple(issues),
             tuple(evidence),
             figure_png,
+            request.difficulty,
+            calibration.level,
+            matches,
         )
+
+    def _ai_confirms_duplicate(
+        self, question: GeneratedQuestion, match: DuplicateMatch
+    ) -> bool:
+        """Use the configured model only for the 55%-70% boundary band."""
+        system_prompt = (
+            "你是初中数学题目查重审核器。判断两题是否只是数字、字母、背景变化，"
+            "或是否共享相同母题和核心解法。只返回JSON对象："
+            '{"duplicate":true或false,"confidence":0到1,"reason":"简述"}。'
+        )
+        user_prompt = (
+            f"候选题：{question.stem}\n候选解析：{question.analysis}\n\n"
+            f"历史题：{match.stem}\n"
+            f"本地相似度：{match.breakdown.total:.3f}\n"
+            f"共同母题标签：{'、'.join(match.shared_model_tags) or '无'}"
+        )
+        try:
+            payload = self._provider.generate_json(system_prompt, user_prompt)
+        except Exception:
+            return False
+        if not isinstance(payload, dict):
+            return False
+        return bool(payload.get("duplicate")) and float(payload.get("confidence", 0)) >= 0.7
 
     @staticmethod
     def _normalize_payload(payload: dict, request: GenerationRequest) -> dict:

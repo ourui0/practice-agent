@@ -42,7 +42,7 @@ class ModelSettingsPage(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(36, 28, 36, 28)
         title = QLabel("模型设置")
-        title.setStyleSheet("font-size: 24px; font-weight: 600;")
+        title.setObjectName("pageTitle")
         layout.addWidget(title)
         hint = QLabel("API Key 使用 Windows DPAPI 加密，只能由当前 Windows 用户解密。")
         hint.setWordWrap(True)

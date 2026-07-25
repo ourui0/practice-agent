@@ -8,9 +8,14 @@ from dataclasses import dataclass
 from sqlalchemy import Engine, or_, select
 from sqlalchemy.orm import Session
 
+from edu_exam_agent.application.services.question_similarity import (
+    DuplicateMatch,
+    QuestionSimilarityService,
+)
 from edu_exam_agent.infrastructure.database.models import (
     DocumentChunkModel,
     QuestionFigureModel,
+    QuestionFingerprintModel,
     QuestionModel,
     QuestionScoreDetailModel,
     QuestionSourceModel,
@@ -36,6 +41,11 @@ class QuestionEdit:
 class QuestionBankService:
     def __init__(self, engine: Engine) -> None:
         self._engine = engine
+        self._similarity = QuestionSimilarityService(engine)
+
+    @property
+    def engine(self) -> Engine:
+        return self._engine
 
     def list(
         self,
@@ -103,6 +113,7 @@ class QuestionBankService:
             question.score = value.score
             question.difficulty = value.difficulty
             question.status = "teacher_edited"
+        self._similarity.refresh_question(question_id, value.difficulty)
 
     def duplicate(self, question_id: int) -> int:
         with Session(self._engine) as session, session.begin():
@@ -112,11 +123,14 @@ class QuestionBankService:
             data = self._snapshot(source)
             data.pop("id", None)
             data["stem"] = f"{data['stem']}（副本）"
-            data["status"] = "draft"
+            data["status"] = "duplicate_review"
+            requested_difficulty = source.difficulty
             copy = QuestionModel(**data)
             session.add(copy)
             session.flush()
-            return copy.id
+            copy_id = copy.id
+        self._similarity.refresh_question(copy_id, requested_difficulty)
+        return copy_id
 
     def delete(self, question_id: int) -> None:
         with Session(self._engine) as session:
@@ -124,6 +138,23 @@ class QuestionBankService:
             if question:
                 session.delete(question)
                 session.commit()
+
+    def approve_variant(self, question_id: int) -> None:
+        """Teacher override: retain a similar item as an intentional variant."""
+        with Session(self._engine) as session, session.begin():
+            question = session.get(QuestionModel, question_id)
+            if question is None:
+                raise ValueError("题目不存在")
+            before = self._snapshot(question)
+            question.status = "teacher_edited"
+            session.add(
+                QuestionVersionModel(
+                    question_id=question.id,
+                    snapshot_json=json.dumps(before, ensure_ascii=False),
+                    changed_fields=json.dumps(["status"], ensure_ascii=False),
+                    changed_by="teacher_variant_override",
+                )
+            )
 
     def versions(self, question_id: int) -> list[QuestionVersionModel]:
         with Session(self._engine) as session:
@@ -145,6 +176,19 @@ class QuestionBankService:
             return session.scalar(
                 select(QuestionScoreDetailModel).where(
                     QuestionScoreDetailModel.question_id == question_id
+                )
+            )
+
+    def duplicate_matches(
+        self, question_id: int, limit: int = 3
+    ) -> tuple[DuplicateMatch, ...]:
+        return self._similarity.closest_for_question(question_id, limit)
+
+    def fingerprint_detail(self, question_id: int) -> QuestionFingerprintModel | None:
+        with Session(self._engine) as session:
+            return session.scalar(
+                select(QuestionFingerprintModel).where(
+                    QuestionFingerprintModel.question_id == question_id
                 )
             )
 

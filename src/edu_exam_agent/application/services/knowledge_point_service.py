@@ -54,7 +54,10 @@ class KnowledgePointService:
                 session.scalars(
                     select(ChapterModel)
                     .join(DocumentModel, DocumentModel.id == ChapterModel.document_id)
-                    .where(DocumentModel.course_id == course_id)
+                    .where(
+                        DocumentModel.course_id == course_id,
+                        ChapterModel.is_excluded.is_(False),
+                    )
                     .order_by(ChapterModel.position)
                 )
             )

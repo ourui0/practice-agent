@@ -67,6 +67,7 @@ class RealRecommendationPage(QWidget):
         layout.addWidget(filters)
 
         self.scroll = QScrollArea()
+        self.scroll.setObjectName("recommendationScroll")
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         self.scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
@@ -123,10 +124,7 @@ class RealRecommendationPage(QWidget):
         kind = QLabel(f"{question.question_type}  ·  难度 {question.difficulty}")
         kind.setObjectName("secondaryText")
         badge = QLabel(f"{question.recommendation_score:g} 分")
-        badge.setStyleSheet(
-            "color:#1967D2; background:#E8F0FE; border-radius:12px;"
-            "padding:4px 10px; font-size:12px; font-weight:600;"
-        )
+        badge.setObjectName("ScoreBadge")
         badge.setToolTip(
             f"题目质量 {question.quality_score * 100:.0f}% · "
             "综合评分按质量与难度适配计算"

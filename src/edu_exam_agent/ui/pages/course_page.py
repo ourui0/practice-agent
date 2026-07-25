@@ -103,7 +103,7 @@ class CoursePage(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(32, 26, 32, 26)
         title = QLabel("课程管理")
-        title.setStyleSheet("font-size: 24px; font-weight: 600;")
+        title.setObjectName("pageTitle")
         layout.addWidget(title)
         toolbar = QHBoxLayout()
         for text, slot in (

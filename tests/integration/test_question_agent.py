@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -15,6 +16,7 @@ from edu_exam_agent.infrastructure.database.engine import (
 )
 from edu_exam_agent.infrastructure.database.models import (
     QuestionFigureModel,
+    QuestionFingerprintModel,
     QuestionModel,
     QuestionSourceModel,
     QuestionValidationModel,
@@ -192,3 +194,130 @@ def test_generation_saves_diagram_for_figure_question(tmp_path) -> None:
     with Session(engine) as session:
         figure = session.scalar(select(QuestionFigureModel))
         assert figure is not None and figure.png_data.startswith(b"\x89PNG")
+
+
+def test_generation_retries_number_only_duplicate_and_keeps_new_model(tmp_path) -> None:
+    engine = create_database_engine(tmp_path / "duplicate-retry.db")
+    initialize_database(engine)
+    course = CourseService(engine).create(CourseInput(name="数学"))
+    material = tmp_path / "教材.md"
+    material.write_text("# 矩形\n矩形的四个角都是直角，对角线相等。", encoding="utf-8")
+    document_service = DocumentService(engine)
+    document = document_service.import_document(course.id, material)
+    chapter = document_service.list_chapters(document.id)[0]
+    base = {
+        "question_type": "计算题",
+        "options": [],
+        "scoring_criteria": "过程正确得5分",
+        "knowledge_points": ["矩形"],
+        "difficulty": 3,
+        "estimated_time_minutes": 5,
+        "score": 5,
+    }
+    first = {
+        **base,
+        "stem": "矩形ABCD中AB=6，点E在BC上，求AE。",
+        "answer": "AE=5",
+        "analysis": "连接AE，因为三角形为直角三角形，所以由勾股定理可得AE=5。",
+    }
+    QuestionGenerationAgent(
+        engine, FtsRetriever(engine), MockProvider(first), "mock"
+    ).generate(
+        GenerationRequest(
+            course.id,
+            "矩形",
+            "计算题",
+            3,
+            document_id=document.id,
+            chapter_ids=(chapter.id,),
+        )
+    )
+
+    class RetryProvider:
+        def __init__(self) -> None:
+            self.generation_calls = 0
+
+        def generate_json(self, system_prompt, _user_prompt):
+            if "查重审核器" in system_prompt:
+                return {"duplicate": False, "confidence": 0.9, "reason": "不同模型"}
+            self.generation_calls += 1
+            if self.generation_calls == 1:
+                return {
+                    **base,
+                    "stem": "矩形PQRS中PQ=15，点M在QR上，求PM。",
+                    "answer": "PM=5",
+                    "analysis": "连接PM，因为三角形为直角三角形，所以由勾股定理可得PM=5。",
+                }
+            return {
+                **base,
+                "stem": "矩形ABCD的对角线交于O，若AC=10，求AO并说明理由。",
+                "answer": "AO=5",
+                "analysis": "矩形的对角线互相平分，因为O是交点，所以AO等于AC的一半，得到5。",
+            }
+
+    provider = RetryProvider()
+    result = QuestionGenerationAgent(
+        engine, FtsRetriever(engine), provider, "mock"
+    ).generate(
+        GenerationRequest(
+            course.id,
+            "矩形",
+            "计算题",
+            3,
+            document_id=document.id,
+            chapter_ids=(chapter.id,),
+        )
+    )
+    assert provider.generation_calls == 2
+    assert "对角线交于O" in result.question.stem
+    with Session(engine) as session:
+        assert session.scalar(select(func.count()).select_from(QuestionModel)) == 2
+        assert session.scalar(select(func.count()).select_from(QuestionFingerprintModel)) == 2
+
+
+def test_level_five_retries_and_refuses_persistent_fake_difficulty(tmp_path) -> None:
+    engine = create_database_engine(tmp_path / "difficulty-retry.db")
+    initialize_database(engine)
+    course = CourseService(engine).create(CourseInput(name="数学"))
+    material = tmp_path / "教材.md"
+    material.write_text("# 矩形\n矩形的面积等于长乘宽。", encoding="utf-8")
+    document_service = DocumentService(engine)
+    document = document_service.import_document(course.id, material)
+    chapter = document_service.list_chapters(document.id)[0]
+    fake = {
+        "question_type": "填空题",
+        "stem": "矩形面积公式是______。",
+        "options": [],
+        "answer": "长乘宽",
+        "analysis": "直接代入公式即可。",
+        "scoring_criteria": "正确得5分",
+        "knowledge_points": ["矩形"],
+        "difficulty": 5,
+        "estimated_time_minutes": 1,
+        "score": 5,
+    }
+
+    class CountingProvider:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def generate_json(self, _system_prompt, _user_prompt):
+            self.calls += 1
+            return fake
+
+    provider = CountingProvider()
+    agent = QuestionGenerationAgent(engine, FtsRetriever(engine), provider, "mock")
+    with pytest.raises(ValueError, match="第五档难度未达标"):
+        agent.generate(
+            GenerationRequest(
+                course.id,
+                "矩形",
+                "填空题",
+                5,
+                document_id=document.id,
+                chapter_ids=(chapter.id,),
+            )
+        )
+    assert provider.calls == 3
+    with Session(engine) as session:
+        assert session.scalar(select(func.count()).select_from(QuestionModel)) == 0

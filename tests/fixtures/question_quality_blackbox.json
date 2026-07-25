@@ -1,0 +1,26 @@
+[
+  {
+    "name": "数字与点名替换",
+    "first": "矩形ABCD中，AB=12，点E在BC上，求AE的长。",
+    "second": "矩形PQRS中，PQ=20，点M在QR上，求PM的长。",
+    "analysis_first": "连接AE，根据矩形性质和勾股定理计算。",
+    "analysis_second": "连接PM，根据矩形性质和勾股定理计算。",
+    "expected_level": "duplicate"
+  },
+  {
+    "name": "最短路径同母题换字母",
+    "first": "正方形ABCD边长为6，点P在AB上，求PC+PD的最小值。",
+    "second": "正方形EFGH边长为10，点M在EF上，求MG+MH的最小值。",
+    "analysis_first": "将D关于AB对称，转化为两点之间线段最短。",
+    "analysis_second": "将H关于EF对称，转化为两点之间线段最短。",
+    "expected_level": "duplicate"
+  },
+  {
+    "name": "不同核心解法不误拦截",
+    "first": "矩形ABCD面积为48，长为8，求宽。",
+    "second": "平行四边形ABCD中，对角线互相平分，证明AO=CO。",
+    "analysis_first": "直接利用矩形面积公式计算。",
+    "analysis_second": "连接两条对角线，根据平行四边形性质证明。",
+    "expected_level": "none"
+  }
+]

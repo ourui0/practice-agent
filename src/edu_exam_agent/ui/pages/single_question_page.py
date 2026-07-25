@@ -66,7 +66,7 @@ class SingleQuestionPage(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(34, 26, 34, 26)
         title = QLabel("单题生成")
-        title.setStyleSheet("font-size: 24px; font-weight: 600;")
+        title.setObjectName("pageTitle")
         layout.addWidget(title)
         box = QGroupBox("生成要求")
         form = QFormLayout(box)
@@ -175,8 +175,18 @@ class SingleQuestionPage(QWidget):
         self.preview.setPlainText(
             f"题干：{q.stem}\n{options}\n\n答案：{q.answer}\n解析：{q.analysis}\n"
             f"质量分：{result.quality_score:.0%}\n推荐综合分：{result.recommendation_score}\n"
+            f"难度校准：请求 {result.requested_difficulty} 档，"
+            f"系统判定 {result.calibrated_difficulty} 档\n"
             f"教材边界：{'通过' if result.boundary_passed else '需复核'}\n\n教材依据：\n{evidence}"
         )
+        if result.duplicate_matches:
+            closest = result.duplicate_matches[0]
+            self.preview.append(
+                "\n重复检测：最接近题目 "
+                f"{closest.question_id}，总相似度 {closest.breakdown.total:.0%}，"
+                f"文本 {closest.breakdown.text:.0%}，数学结构 {closest.breakdown.math:.0%}，"
+                f"母题 {closest.breakdown.model:.0%}。"
+            )
         if result.figure_png:
             pixmap = QPixmap()
             pixmap.loadFromData(result.figure_png, "PNG")

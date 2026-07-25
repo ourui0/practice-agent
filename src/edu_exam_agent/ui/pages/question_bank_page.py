@@ -79,7 +79,7 @@ class QuestionBankPage(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(30, 24, 30, 24)
         title = QLabel("题库")
-        title.setStyleSheet("font-size: 24px; font-weight: 600;")
+        title.setObjectName("pageTitle")
         layout.addWidget(title)
         filters = QHBoxLayout()
         self.course = QComboBox()
@@ -113,6 +113,7 @@ class QuestionBankPage(QWidget):
             ("查看详情", self._view),
             ("编辑", self._edit),
             ("复制", self._duplicate),
+            ("保留为可用变式", self._approve_variant),
             ("历史版本", self._history),
             ("删除", self._delete),
         ):
@@ -201,6 +202,42 @@ class QuestionBankPage(QWidget):
             )
             score_label.setWordWrap(True)
             layout.addWidget(score_label)
+        fingerprint = self._bank.fingerprint_detail(question.id)
+        if fingerprint is not None:
+            tags = json.loads(fingerprint.model_tags_json)
+            reasons = json.loads(fingerprint.difficulty_reasons_json)
+            difficulty_label = QLabel(
+                f"难度校准：教师请求 {fingerprint.requested_difficulty} 档 → "
+                f"系统判定 {fingerprint.calibrated_difficulty} 档\n"
+                f"母题标签：{'、'.join(tags) if tags else '未识别到固定母题'}\n"
+                f"判定依据：{'；'.join(reasons)}"
+            )
+            difficulty_label.setWordWrap(True)
+            layout.addWidget(difficulty_label)
+        matches = self._bank.duplicate_matches(question.id, 3)
+        if matches:
+            level_names = {
+                "duplicate": "重复",
+                "high": "高度相似",
+                "warning": "相似提示",
+                "none": "低相似",
+            }
+            lines = ["重复检测（最接近的3题）："]
+            for match in matches:
+                breakdown = match.breakdown
+                lines.append(
+                    f"题目 {match.question_id}｜{level_names[breakdown.level]}｜"
+                    f"总相似度 {breakdown.total:.0%}｜文本 {breakdown.text:.0%}｜"
+                    f"数学结构 {breakdown.math:.0%}｜母题 {breakdown.model:.0%}\n"
+                    f"共同标签：{'、'.join(match.shared_model_tags) or '无'}\n"
+                    f"{match.stem[:100]}"
+                )
+            duplicate_label = QLabel("\n\n".join(lines))
+            duplicate_label.setWordWrap(True)
+            duplicate_label.setTextInteractionFlags(
+                Qt.TextInteractionFlag.TextSelectableByMouse
+            )
+            layout.addWidget(duplicate_label)
         figure = self._bank.figure(question.id)
         if figure is not None:
             label = QLabel()
@@ -239,6 +276,21 @@ class QuestionBankPage(QWidget):
                 or "暂无历史版本"
             )
             QMessageBox.information(self, "题目历史版本", detail)
+
+    def _approve_variant(self) -> None:
+        question = self._selected()
+        if question is None:
+            return
+        if (
+            QMessageBox.question(
+                self,
+                "确认保留变式",
+                "该操作会允许此题进入自动组卷。请确认它具有独立教学价值，而不是仅替换数字。",
+            )
+            == QMessageBox.StandardButton.Yes
+        ):
+            self._bank.approve_variant(question.id)
+            self.refresh()
 
     def _delete(self) -> None:
         question = self._selected()

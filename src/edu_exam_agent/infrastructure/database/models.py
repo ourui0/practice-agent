@@ -82,6 +82,26 @@ class DocumentModel(Base):
     )
 
 
+class DocumentProfileModel(Base):
+    """Detected textbook identity and the latest source-file health result."""
+
+    __tablename__ = "document_profiles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    document_id: Mapped[int] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE"), unique=True, nullable=False
+    )
+    publisher: Mapped[str] = mapped_column(String(100), nullable=False, default="")
+    grade_level: Mapped[str] = mapped_column(String(50), nullable=False, default="")
+    volume: Mapped[str] = mapped_column(String(20), nullable=False, default="")
+    edition: Mapped[str] = mapped_column(String(100), nullable=False, default="")
+    file_state: Mapped[str] = mapped_column(String(30), nullable=False, default="unknown")
+    validation_message: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    last_checked_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
 class ChapterModel(Base):
     __tablename__ = "chapters"
 
@@ -271,3 +291,89 @@ class QuestionVersionModel(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), nullable=False
     )
+
+
+class QuestionFingerprintModel(Base):
+    """Deterministic duplicate and calibrated-difficulty metadata."""
+
+    __tablename__ = "question_fingerprints"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    question_id: Mapped[int] = mapped_column(
+        ForeignKey("questions.id", ondelete="CASCADE"), unique=True, nullable=False
+    )
+    normalized_text: Mapped[str] = mapped_column(Text, nullable=False)
+    text_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    math_signature: Mapped[str] = mapped_column(Text, nullable=False)
+    model_tags_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    requested_difficulty: Mapped[int] = mapped_column(Integer, nullable=False)
+    calibrated_difficulty: Mapped[int] = mapped_column(Integer, nullable=False)
+    difficulty_features_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    difficulty_reasons_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class QuestionDuplicateRelationModel(Base):
+    """Explainable similarity edge between two persisted questions."""
+
+    __tablename__ = "question_duplicate_relations"
+    __table_args__ = (
+        UniqueConstraint(
+            "question_id", "matched_question_id", name="uq_question_duplicate_pair"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    question_id: Mapped[int] = mapped_column(
+        ForeignKey("questions.id", ondelete="CASCADE"), nullable=False
+    )
+    matched_question_id: Mapped[int] = mapped_column(
+        ForeignKey("questions.id", ondelete="CASCADE"), nullable=False
+    )
+    total_similarity: Mapped[float] = mapped_column(nullable=False)
+    text_similarity: Mapped[float] = mapped_column(nullable=False)
+    math_similarity: Mapped[float] = mapped_column(nullable=False)
+    model_similarity: Mapped[float] = mapped_column(nullable=False)
+    level: Mapped[str] = mapped_column(String(20), nullable=False)
+    reviewer: Mapped[str] = mapped_column(String(30), nullable=False, default="local")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), nullable=False
+    )
+
+
+class PaperHistoryModel(Base):
+    """Saved paper lifecycle used for recent-use exclusion."""
+
+    __tablename__ = "paper_history"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    course_id: Mapped[int] = mapped_column(
+        ForeignKey("courses.id", ondelete="CASCADE"), nullable=False
+    )
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="draft")
+    request_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), nullable=False
+    )
+    exported_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class PaperHistoryItemModel(Base):
+    __tablename__ = "paper_history_items"
+    __table_args__ = (
+        UniqueConstraint("paper_id", "position", name="uq_paper_history_position"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    paper_id: Mapped[int] = mapped_column(
+        ForeignKey("paper_history.id", ondelete="CASCADE"), nullable=False
+    )
+    question_id: Mapped[int] = mapped_column(
+        ForeignKey("questions.id", ondelete="RESTRICT"), nullable=False
+    )
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    snapshot_json: Mapped[str] = mapped_column(Text, nullable=False)

@@ -66,14 +66,15 @@ class FtsRetriever:
             JOIN document_chunks c ON c.id = CAST(f.chunk_id AS INTEGER)
             JOIN documents d ON d.id = c.document_id
             JOIN chapters h ON h.id = c.chapter_id
-            WHERE document_chunks_fts MATCH :query AND {" AND ".join(filters)}
+            WHERE document_chunks_fts MATCH :query
+            AND h.is_excluded = 0 AND {" AND ".join(filters)}
             ORDER BY bm25(document_chunks_fts) LIMIT :limit"""
         )
         with self._engine.connect() as connection:
             return [SearchResult(*row) for row in connection.execute(statement, parameters)]
 
     def rebuild(self, course_id: int | None = None) -> int:
-        where = "WHERE course_id = :course_id" if course_id is not None else ""
+        where = "AND c.course_id = :course_id" if course_id is not None else ""
         parameters = {"course_id": course_id} if course_id is not None else {}
         with self._engine.begin() as connection:
             if course_id is None:
@@ -87,8 +88,10 @@ class FtsRetriever:
                 text(
                     f"""INSERT INTO document_chunks_fts(
                     chunk_id, course_id, document_id, chapter_id, content)
-                    SELECT id, course_id, document_id, chapter_id, content
-                    FROM document_chunks {where}"""
+                    SELECT c.id, c.course_id, c.document_id, c.chapter_id, c.content
+                    FROM document_chunks c
+                    JOIN chapters h ON h.id = c.chapter_id
+                    WHERE h.is_excluded = 0 {where}"""
                 ),
                 parameters,
             )
@@ -115,7 +118,10 @@ class FtsRetriever:
             )
             .join(DocumentModel, DocumentModel.id == DocumentChunkModel.document_id)
             .join(ChapterModel, ChapterModel.id == DocumentChunkModel.chapter_id)
-            .where(DocumentChunkModel.course_id == course_id)
+            .where(
+                DocumentChunkModel.course_id == course_id,
+                ChapterModel.is_excluded.is_(False),
+            )
             .order_by(DocumentChunkModel.page_start, DocumentChunkModel.id)
             .limit(min(max(limit, 1), 20))
         )
