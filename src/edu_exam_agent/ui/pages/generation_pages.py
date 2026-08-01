@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Qt, QThread, Signal, Slot
@@ -47,6 +48,8 @@ from edu_exam_agent.application.services.question_types import (
     QUESTION_TYPE_ORDER,
 )
 from edu_exam_agent.infrastructure.retrieval import FtsRetriever
+from edu_exam_agent.ui.theme import PAGE_MARGINS
+from edu_exam_agent.ui.widgets import StatusLabel
 
 
 class BatchGenerationWorker(QObject):
@@ -114,7 +117,8 @@ class _PaperGenerationPage(QWidget):
         self.scroll_content = QWidget()
         self.scroll_content.setObjectName("paperGenerationContent")
         layout = QVBoxLayout(self.scroll_content)
-        layout.setContentsMargins(34, 26, 34, 26)
+        left, top, right, bottom = PAGE_MARGINS
+        layout.setContentsMargins(left, top, right, bottom)
         layout.setSpacing(14)
         layout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
         self.page_scroll.setWidget(self.scroll_content)
@@ -123,10 +127,8 @@ class _PaperGenerationPage(QWidget):
         title = QLabel(self.page_title)
         title.setObjectName("pageTitle")
         layout.addWidget(title)
-        self.status = QLabel(self.subtitle)
-        self.status.setObjectName("pageSubtitle")
-        self.status.setWordWrap(True)
-        layout.addWidget(self.status)
+        self.status_label = StatusLabel(self.subtitle)
+        layout.addWidget(self.status_label)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.setChildrenCollapsible(False)
@@ -198,7 +200,9 @@ class _PaperGenerationPage(QWidget):
         popup_layout.addLayout(popup_columns)
         self.title_input = QComboBox()
         self.title_input.setEditable(True)
-        self.title_input.addItem(self.page_title)
+        default_title = f"{self.page_title} - {date.today().isoformat()}"
+        self.title_input.addItem(default_title)
+        self.title_input.setAccessibleName("试卷标题")
         self.count = QSpinBox()
         self.count.setRange(0, 400)
         self.count.setReadOnly(True)
@@ -318,15 +322,25 @@ class _PaperGenerationPage(QWidget):
         left_layout.addWidget(types)
 
         actions = QHBoxLayout()
-        generate = QPushButton("从题库智能组题")
-        generate.clicked.connect(self.generate)
+        self.generate_btn = QPushButton("从题库智能组题")
+        self.generate_btn.clicked.connect(self.generate)
+        self.generate_btn.setAccessibleName("从题库智能组题")
         self.export_button = QPushButton("导出 Word")
         self.export_button.setEnabled(False)
         self.export_button.clicked.connect(self.export)
-        actions.addWidget(generate)
+        self.export_button.setAccessibleName("导出 Word")
+        self.cancel_supplement_btn = QPushButton("取消补题")
+        self.cancel_supplement_btn.clicked.connect(self._cancel_supplement)
+        self.cancel_supplement_btn.hide()
+        actions.addWidget(self.generate_btn)
         actions.addWidget(self.export_button)
+        actions.addWidget(self.cancel_supplement_btn)
         actions.addStretch(1)
         left_layout.addLayout(actions)
+        # Connect type count changes to update button states
+        for spin in self.type_count_spins.values():
+            spin.valueChanged.connect(self._update_generate_button_state)
+        self.course.currentIndexChanged.connect(self._update_generate_button_state)
         self.preview = QTextEdit()
         self.preview.setReadOnly(True)
         self.preview.setMinimumHeight(120)
@@ -561,6 +575,23 @@ class _PaperGenerationPage(QWidget):
             for question_type, count in type_counts
         )
 
+    def _update_generate_button_state(self) -> None:
+        """Enable generate only when course is selected and at least one type has count > 0."""
+        has_course = self.course.currentData() is not None
+        has_types = any(spin.value() > 0 for spin in self.type_count_spins.values())
+        self.generate_btn.setEnabled(has_course and has_types)
+
+    def _cancel_supplement(self) -> None:
+        if self._batch_thread is not None and self._batch_thread.isRunning():
+            self._batch_thread.quit()
+            self._batch_thread.wait(1000)
+        self._batch_thread = None
+        self._batch_worker = None
+        self._pending_request = None
+        self.cancel_supplement_btn.hide()
+        self.generate_btn.setEnabled(True)
+        self.status_label.setText("补题操作已取消。")
+
     def generate(self) -> None:
         if self.course.currentData() is None:
             QMessageBox.information(self, "缺少课程", "请先创建课程并生成题目。")
@@ -644,9 +675,14 @@ class _PaperGenerationPage(QWidget):
             for question_type in QUESTION_TYPE_ORDER
             if counts.get(question_type, 0) > 0
         )
-        self.status.setText(
+        self.status_label.setText(
             f"已生成{len(self._paper.questions)}道题：{self._type_summary(ordered_counts)}。"
         )
+
+    def load_paper(self, history_id: int) -> None:
+        """Restore and preview a paper selected from the AI chat page."""
+        self._paper = self._papers.load(history_id)
+        self._show_paper()
 
     def _outline_reordered(self, *_args) -> None:  # type: ignore[no-untyped-def]
         if self._syncing_outline or self._paper is None:
@@ -664,7 +700,7 @@ class _PaperGenerationPage(QWidget):
             self._paper.history_id,
         )
         self.preview.setPlainText(self._papers.preview(self._paper))
-        self.status.setText("题目顺序已更新，预览与导出内容已同步。")
+        self.status_label.setText("题目顺序已更新，预览与导出内容已同步。")
 
     def _start_supplement(
         self, request: PaperRequest, shortages: dict[str, int]
@@ -723,13 +759,17 @@ class _PaperGenerationPage(QWidget):
             f"{QUESTION_TYPE_LABELS[question_type]}还缺{count}道"
             for question_type, count in batch_request.question_type_counts
         )
-        self.status.setText(
+        self.generate_btn.setEnabled(False)
+        self.cancel_supplement_btn.show()
+        self.status_label.setText(
             f"当前无法完成组题：{shortage_text}。正在按缺口自动补题……"
         )
         self._batch_thread.start()
 
     @Slot(object)
     def _supplement_finished(self, result: BatchGenerationResult) -> None:
+        self.cancel_supplement_btn.hide()
+        self.generate_btn.setEnabled(True)
         request = self._pending_request
         self._pending_request = None
         if request is None:
@@ -756,7 +796,7 @@ class _PaperGenerationPage(QWidget):
         except (OSError, ValueError) as exc:
             QMessageBox.warning(self, "导出失败", str(exc))
             return
-        self.status.setText(f"已导出：{output}")
+        self.status_label.setText(f"已导出：{output}")
 
 
 class ExamGenerationPage(_PaperGenerationPage):

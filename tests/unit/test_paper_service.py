@@ -69,6 +69,15 @@ def test_assemble_preview_and_export(tmp_path: Path) -> None:
     assert output.exists()
     assert output.stat().st_size > 1000
 
+    restored = service.load(paper.history_id or -1)
+    assert restored.history_id == paper.history_id
+    assert restored.title == paper.title
+    assert restored.duration_minutes == paper.duration_minutes
+    assert restored.include_answers == paper.include_answers
+    assert [question.id for question in restored.questions] == [
+        question.id for question in paper.questions
+    ]
+
 
 def test_assemble_rejects_shortage_and_invalid_request(tmp_path: Path) -> None:
     engine = create_database_engine(tmp_path / "paper.db")

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "edu-exam-agent"
-version = "0.1.0"
+version = "0.8.0"
 description = "面向教师的 AI 智能出题与试卷生成 Windows 桌面应用"
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
@@ -23,12 +23,18 @@ dev = [
   "pytest-cov>=6,<7",
   "ruff>=0.8,<1",
 ]
+release = [
+  "pyinstaller>=6.21,<7",
+]
 
 [project.gui-scripts]
 edu-exam-agent = "edu_exam_agent.app.main:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"edu_exam_agent" = ["assets/*.png", "assets/*.ico"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

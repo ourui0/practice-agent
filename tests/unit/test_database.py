@@ -25,6 +25,11 @@ def test_database_initialization_is_idempotent(tmp_path: Path) -> None:
         "question_duplicate_relations",
         "paper_history",
         "paper_history_items",
+        "chat_conversations",
+        "chat_messages",
+        "chat_tool_events",
+        "agent_operations",
+        "teaching_packages",
     } <= table_names
     with Session(engine) as session:
         versions = session.scalars(select(SchemaVersion)).all()
@@ -34,5 +39,8 @@ def test_database_initialization_is_idempotent(tmp_path: Path) -> None:
         "0003",
         "0004",
         "0005",
+        "0006",
+        "0007",
+        "0008",
         SCHEMA_VERSION,
     ]

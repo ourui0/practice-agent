@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from edu_exam_agent.application.services.question_agent import (
@@ -51,14 +52,21 @@ class BatchGenerationRequest:
 class BatchGenerationResult:
     created_ids: tuple[int, ...]
     errors: tuple[str, ...]
+    cancelled: bool = False
 
 
 class BatchQuestionGenerationService:
     def __init__(self, agent: QuestionGenerationAgent) -> None:
         self._agent = agent
 
-    def generate(self, request: BatchGenerationRequest) -> BatchGenerationResult:
+    def generate(
+        self,
+        request: BatchGenerationRequest,
+        should_cancel: Callable[[], bool] | None = None,
+        progress: Callable[[int, int, str], None] | None = None,
+    ) -> BatchGenerationResult:
         request.validate()
+        cancel = should_cancel or (lambda: False)
         created: list[int] = []
         errors: list[str] = []
         if request.question_type_counts:
@@ -74,8 +82,13 @@ class BatchQuestionGenerationService:
                 request.question_types[index % len(request.question_types)]
                 for index in range(request.count)
             )
+        total = len(generation_types)
         for index, question_type in enumerate(generation_types):
+            if cancel():
+                return BatchGenerationResult(tuple(created), tuple(errors), True)
             point = request.knowledge_points[index % len(request.knowledge_points)]
+            if progress is not None:
+                progress(index, total, f"正在生成{question_type}")
             try:
                 result = self._agent.generate(
                     GenerationRequest(
@@ -92,4 +105,6 @@ class BatchQuestionGenerationService:
                 created.append(result.question_id)
             except Exception as exc:
                 errors.append(f"{point}/{question_type}：{exc}")
-        return BatchGenerationResult(tuple(created), tuple(errors))
+        if progress is not None:
+            progress(total, total, "正在汇总质量与查重结果")
+        return BatchGenerationResult(tuple(created), tuple(errors), False)

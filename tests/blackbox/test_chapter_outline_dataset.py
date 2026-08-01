@@ -8,7 +8,6 @@ import pytest
 from edu_exam_agent.application.services.document_processing import recognize_chapters
 from edu_exam_agent.infrastructure.parsers import ParsedDocument, ParsedPage
 
-
 DATASET = Path(__file__).parents[1] / "fixtures" / "chapter_outline_blackbox.json"
 CASES = json.loads(DATASET.read_text(encoding="utf-8"))
 

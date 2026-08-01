@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from edu_exam_agent.infrastructure.database.models import Base, SchemaVersion
 
-SCHEMA_VERSION = "0006"
+SCHEMA_VERSION = "0009"
 
 
 def create_database_engine(database_file: Path) -> Engine:
@@ -43,7 +43,17 @@ def initialize_database(engine: Engine) -> None:
         # Version 0001 is the original bootstrap schema. Version 0002 adds
         # courses, documents, chapters and chunks. create_all performs the
         # additive table creation; future column changes must use migrations.
-        for version in ("0001", "0002", "0003", "0004", "0005", SCHEMA_VERSION):
+        for version in (
+            "0001",
+            "0002",
+            "0003",
+            "0004",
+            "0005",
+            "0006",
+            "0007",
+            "0008",
+            SCHEMA_VERSION,
+        ):
             if version not in applied:
                 session.add(SchemaVersion(version=version))
         session.commit()

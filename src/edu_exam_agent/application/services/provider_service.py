@@ -100,14 +100,24 @@ class ProviderService:
             self._audit(config.provider_name, config.model_name, "连接测试", False, str(exc)[:300])
             raise
 
-    def create_provider(self) -> tuple[OpenAICompatibleProvider, str]:
+    def create_provider(self, timeout: int = 60) -> tuple[OpenAICompatibleProvider, str]:
+        if not 15 <= timeout <= 300:
+            raise ValueError("模型请求超时时间应在 15 到 300 秒之间")
         config = self.get_default()
         if config is None:
             raise ValueError("请先在模型设置中保存配置")
         key = self._secrets.get(f"provider:{config.provider_name.lower()}")
         if not key:
             raise ValueError("请先在模型设置中保存 API Key")
-        return OpenAICompatibleProvider(config.base_url, config.model_name, key), config.model_name
+        return (
+            OpenAICompatibleProvider(
+                config.base_url,
+                config.model_name,
+                key,
+                timeout=timeout,
+            ),
+            config.model_name,
+        )
 
     def list_audits(self, limit: int = 50) -> list[LLMProviderAuditModel]:
         with Session(self._engine) as session:

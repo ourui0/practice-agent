@@ -218,6 +218,35 @@ class PaperService:
             history.status = "used"
             history.used_at = datetime.now()
 
+    def load(self, history_id: int) -> Paper:
+        """Restore a persisted paper so chat and assembly pages can preview it."""
+        with Session(self._bank.engine) as session:
+            history = session.get(PaperHistoryModel, history_id)
+            if history is None:
+                raise ValueError("试卷历史不存在")
+            items = list(
+                session.scalars(
+                    select(PaperHistoryItemModel)
+                    .where(PaperHistoryItemModel.paper_id == history_id)
+                    .order_by(PaperHistoryItemModel.position)
+                )
+            )
+            questions = [
+                session.get(QuestionModel, item.question_id) for item in items
+            ]
+            if any(question is None for question in questions):
+                raise ValueError("试卷中的部分题目已经不存在")
+            request = json.loads(history.request_json or "{}")
+            for question in questions:
+                session.expunge(question)
+            return Paper(
+                history.title,
+                tuple(questions),
+                int(request.get("duration_minutes", 90)),
+                bool(request.get("include_answers", True)),
+                history.id,
+            )
+
     def _select_by_quota(
         self, request: PaperRequest, candidates: list[QuestionModel]
     ) -> list[QuestionModel]:

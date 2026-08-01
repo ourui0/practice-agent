@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -12,6 +14,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
+    QMenu,
     QMessageBox,
     QPushButton,
     QSpinBox,
@@ -24,6 +27,8 @@ from PySide6.QtWidgets import (
 
 from edu_exam_agent.application.services.course_service import CourseInput, CourseService
 from edu_exam_agent.infrastructure.database.models import CourseModel
+from edu_exam_agent.ui.theme import PAGE_MARGINS
+from edu_exam_agent.ui.widgets import EmptyStateWidget, StatusLabel
 
 
 class CourseDialog(QDialog):
@@ -101,21 +106,27 @@ class CoursePage(QWidget):
         self._service = service
         self._courses: list[CourseModel] = []
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(32, 26, 32, 26)
+        left, top, right, bottom = PAGE_MARGINS
+        layout.setContentsMargins(left, top, right, bottom)
         title = QLabel("课程管理")
         title.setObjectName("pageTitle")
         layout.addWidget(title)
         toolbar = QHBoxLayout()
-        for text, slot in (
-            ("新建课程", self._create),
-            ("编辑", self._edit),
-            ("复制", self._duplicate),
-            ("归档/恢复", self._archive),
-            ("删除", self._delete),
-        ):
-            button = QPushButton(text)
-            button.clicked.connect(slot)
-            toolbar.addWidget(button)
+        self.create_btn = QPushButton("新建课程")
+        self.create_btn.clicked.connect(self._create)
+        toolbar.addWidget(self.create_btn)
+        self.edit_btn = QPushButton("编辑")
+        self.edit_btn.clicked.connect(self._edit)
+        toolbar.addWidget(self.edit_btn)
+        self.duplicate_btn = QPushButton("复制")
+        self.duplicate_btn.clicked.connect(self._duplicate)
+        toolbar.addWidget(self.duplicate_btn)
+        self.archive_btn = QPushButton("归档/恢复")
+        self.archive_btn.clicked.connect(self._archive)
+        toolbar.addWidget(self.archive_btn)
+        self.delete_btn = QPushButton("删除")
+        self.delete_btn.clicked.connect(self._delete)
+        toolbar.addWidget(self.delete_btn)
         self.show_archived = QCheckBox("显示已归档")
         self.show_archived.toggled.connect(self.refresh)
         toolbar.addWidget(self.show_archived)
@@ -126,10 +137,28 @@ class CoursePage(QWidget):
             ("课程名称", "学科", "阶段", "年级", "学期", "总分", "状态")
         )
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.doubleClicked.connect(self._edit)
+        self.table.itemSelectionChanged.connect(self._update_button_states)
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._context_menu)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        # Enter key = edit
+        enter_shortcut = QShortcut(QKeySequence("Return"), self.table)
+        enter_shortcut.activated.connect(self._edit)
         layout.addWidget(self.table)
+        self.empty_state = EmptyStateWidget(
+            icon="📋",
+            message="还没有课程，创建第一个课程开始使用",
+            action_label="新建课程",
+        )
+        self.empty_state.action_button.clicked.connect(self._create)
+        self.empty_state.hide()
+        layout.addWidget(self.empty_state)
+        self.status_label = StatusLabel()
+        layout.addWidget(self.status_label)
+        self._update_button_states()
         self.refresh()
 
     def refresh(self) -> None:
@@ -147,13 +176,35 @@ class CoursePage(QWidget):
             )
             for column, value in enumerate(values):
                 self.table.setItem(row, column, QTableWidgetItem(value))
+        has_data = len(self._courses) > 0
+        self.table.setVisible(has_data)
+        self.empty_state.setVisible(not has_data)
+        self._update_button_states()
+
+    def _update_button_states(self) -> None:
+        has_selection = self.table.currentRow() >= 0
+        self.edit_btn.setEnabled(has_selection)
+        self.duplicate_btn.setEnabled(has_selection)
+        self.archive_btn.setEnabled(has_selection)
+        self.delete_btn.setEnabled(has_selection)
 
     def _selected(self) -> CourseModel | None:
         row = self.table.currentRow()
         if row < 0:
-            QMessageBox.information(self, "请选择课程", "请先在列表中选择一门课程。")
             return None
         return self._courses[row]
+
+    def _context_menu(self, pos) -> None:
+        course = self._selected()
+        if course is None:
+            return
+        menu = QMenu(self)
+        menu.addAction("编辑", self._edit)
+        menu.addAction("复制", self._duplicate)
+        menu.addAction("归档/恢复", self._archive)
+        menu.addSeparator()
+        menu.addAction("删除", self._delete)
+        menu.exec(self.table.viewport().mapToGlobal(pos))
 
     def _create(self) -> None:
         dialog = CourseDialog(parent=self)

@@ -15,7 +15,6 @@ from edu_exam_agent.infrastructure.database.engine import (
 )
 from edu_exam_agent.infrastructure.database.models import QuestionModel
 
-
 DATASET = Path(__file__).parents[1] / "fixtures" / "question_type_quota_blackbox.json"
 
 

@@ -3,6 +3,21 @@
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import QApplication
 
+# ---------------------------------------------------------------------------
+# Layout constants
+# ---------------------------------------------------------------------------
+PAGE_MARGINS = (32, 28, 32, 28)
+
+# ---------------------------------------------------------------------------
+# Animation durations (ms)
+# ---------------------------------------------------------------------------
+ANIMATION_DURATION_FAST = 150
+ANIMATION_DURATION_NORMAL = 200
+ANIMATION_DURATION_SLOW = 500
+
+# ---------------------------------------------------------------------------
+# Colour tokens
+# ---------------------------------------------------------------------------
 WINDOW_BASE = "#F8F9FA"
 SURFACE = "#FFFFFF"
 FIELD_FILL = "#FFFFFF"
@@ -10,6 +25,7 @@ PRIMARY = "#0B57D0"
 TEXT = "#202124"
 SECONDARY_TEXT = "#5F6368"
 OUTLINE = "#E0E3E7"
+SUCCESS_GREEN = "#E6F4EA"
 
 
 def apply_light_theme(application: QApplication) -> None:
@@ -391,4 +407,233 @@ QLabel#ScoreBadge {
     font-weight: 600;
 }
 QFrame#OutlineDrawer { background: #F1F3F4; border-left: 1px solid #E0E3E7; }
+QLabel#StatusLabel {
+    color: #5F6368;
+    font-size: 13px;
+    min-height: 24px;
+}
+QFrame#EmptyState {
+    background: #FFFFFF;
+    border: 1px solid #E0E3E7;
+    border-radius: 12px;
+}
+QLabel#EmptyStateIcon { font-size: 40px; }
+QLabel#EmptyStateText { color: #5F6368; font-size: 14px; }
+QPushButton:focus {
+    outline: 2px solid #0B57D0;
+    outline-offset: 2px;
+}
+/* Sidebar navigation already communicates focus/selection with a pill.
+   Keep keyboard focus, but suppress the global square focus outline here. */
+QFrame#Sidebar QPushButton#NavButton[navButton="true"]:focus,
+QFrame#Sidebar QPushButton#NavButton[navButton="true"]:checked:focus,
+QFrame#Sidebar QPushButton#NavButton[navButton="true"]:pressed {
+    border: none;
+    outline: none;
+    outline-offset: 0px;
+}
+QFrame#Sidebar QPushButton#NavButton[navButton="true"]:focus {
+    background: #E8F0FE;
+}
+QFrame#Sidebar QPushButton#NavButton[navButton="true"][active="true"]:focus {
+    color: #041E49;
+    background: #D3E3FD;
+}
+/* AI chat page: every selector is intentionally scoped to ChatPage. */
+QWidget#ChatPage {
+    background: #F8F9FA;
+}
+QWidget#ChatPage QFrame#ChatStatusCard {
+    background: #FFFFFF;
+    border: 1px solid #DADCE0;
+    border-radius: 10px;
+}
+QWidget#ChatPage QLabel#ChatModelLabel {
+    color: #1F1F1F;
+    font-weight: 600;
+}
+QWidget#ChatPage QLabel#ChatConnectionState {
+    color: #B3261E;
+    background: #FCE8E6;
+    border-radius: 10px;
+    padding: 3px 9px;
+}
+QWidget#ChatPage QLabel#ChatConnectionState[available="true"] {
+    color: #137333;
+    background: #E6F4EA;
+}
+QWidget#ChatPage QPushButton#ChatSettingsButton,
+QWidget#ChatPage QPushButton#ChatDeleteButton,
+QWidget#ChatPage QPushButton#ChatRetryButton,
+QWidget#ChatPage QPushButton#MessageActionButton {
+    min-height: 30px;
+    max-height: 30px;
+    padding: 0 11px;
+    border: none;
+    border-radius: 15px;
+    background: transparent;
+}
+QWidget#ChatPage QPushButton#ChatSettingsButton:hover,
+QWidget#ChatPage QPushButton#ChatDeleteButton:hover,
+QWidget#ChatPage QPushButton#ChatRetryButton:hover,
+QWidget#ChatPage QPushButton#MessageActionButton:hover {
+    background: #E8F0FE;
+}
+QWidget#ChatPage QFrame#ChatHistoryPanel,
+QWidget#ChatPage QFrame#ChatMainPanel {
+    background: #FFFFFF;
+    border: 1px solid #DADCE0;
+    border-radius: 12px;
+}
+QWidget#ChatPage QLabel#ChatPanelTitle {
+    color: #1F1F1F;
+    font-size: 14px;
+    font-weight: 600;
+}
+QWidget#ChatPage QListWidget#ChatHistoryList {
+    background: transparent;
+    border: none;
+    border-radius: 8px;
+    outline: none;
+}
+QWidget#ChatPage QListWidget#ChatHistoryList::item {
+    min-height: 48px;
+    margin: 2px 0;
+    padding: 7px 9px;
+    color: #444746;
+    border: none;
+    border-radius: 8px;
+}
+QWidget#ChatPage QListWidget#ChatHistoryList::item:hover {
+    background: #F1F3F4;
+}
+QWidget#ChatPage QListWidget#ChatHistoryList::item:selected {
+    color: #041E49;
+    background: #D3E3FD;
+}
+QWidget#ChatPage QScrollArea#ChatMessageScroll,
+QWidget#ChatPage QScrollArea#ChatMessageScroll::viewport,
+QWidget#ChatPage QWidget#ChatMessageContainer,
+QWidget#ChatPage QWidget#ChatMessageRow,
+QWidget#ChatPage QWidget#ChatToolCardRow {
+    background: transparent;
+    border: none;
+}
+QWidget#ChatPage QFrame#UserMessageBubble {
+    background: #D3E3FD;
+    border: none;
+    border-radius: 12px;
+}
+QWidget#ChatPage QFrame#AssistantMessageBubble {
+    background: #FFFFFF;
+    border: 1px solid #DADCE0;
+    border-radius: 12px;
+}
+QWidget#ChatPage QLabel#MessageRole {
+    color: #5F6368;
+    font-size: 11px;
+    font-weight: 600;
+}
+QWidget#ChatPage QTextBrowser#MessageContent,
+QWidget#ChatPage QTextBrowser#MessageContent:focus {
+    min-height: 0;
+    padding: 0;
+    color: #1F1F1F;
+    background: transparent;
+    border: none;
+    outline: none;
+}
+QWidget#ChatPage QLabel#ChatEmptyState {
+    min-height: 180px;
+    color: #5F6368;
+    font-size: 14px;
+}
+QWidget#ChatPage QLabel#ChatRequestStatus {
+    min-height: 22px;
+    color: #5F6368;
+    padding: 0 4px;
+}
+QWidget#ChatPage QFrame#ChatInputCard {
+    background: #FFFFFF;
+    border: 1px solid #DADCE0;
+    border-radius: 12px;
+}
+QWidget#ChatPage QPlainTextEdit#ChatInput {
+    min-height: 64px;
+    padding: 9px 11px;
+    color: #1F1F1F;
+    background: #FFFFFF;
+    border: 1px solid #DADCE0;
+    border-radius: 8px;
+}
+QWidget#ChatPage QPlainTextEdit#ChatInput:focus {
+    padding: 8px 10px;
+    border: 2px solid #0B57D0;
+}
+QWidget#ChatPage QPushButton#ChatSendButton {
+    min-height: 40px;
+    max-height: 40px;
+}
+QWidget#ChatPage QPushButton#ChatSendButton:disabled {
+    color: #9AA0A6;
+    background: #F1F3F4;
+    border-color: #E3E3E3;
+}
+QWidget#ChatPage QLabel#ChatPrivacyNotice {
+    color: #5F6368;
+    font-size: 11px;
+}
+QWidget#ChatPage QFrame#ToolExecutionCard {
+    min-width: 460px;
+    max-width: 760px;
+    background: #F8FAFD;
+    border: 1px solid #AECBFA;
+    border-radius: 12px;
+}
+QWidget#ChatPage QFrame#ToolExecutionCard[kind="plan"] {
+    background: #EEF3FE;
+    border-color: #AECBFA;
+}
+QWidget#ChatPage QFrame#ToolExecutionCard[kind="generation"],
+QWidget#ChatPage QFrame#ToolExecutionCard[kind="paper"],
+QWidget#ChatPage QFrame#ToolExecutionCard[kind="export"] {
+    background: #F0F9F1;
+    border-color: #A8DAB5;
+}
+QWidget#ChatPage QFrame#ToolExecutionCard[status="failed"],
+QWidget#ChatPage QFrame#ToolExecutionCard[status="cancelled"] {
+    background: #FCE8E6;
+    border-color: #F6AEA9;
+}
+QWidget#ChatPage QLabel#ToolCardTitle {
+    color: #1F1F1F;
+    font-size: 14px;
+    font-weight: 600;
+}
+QWidget#ChatPage QLabel#ToolCardStatus {
+    color: #0B57D0;
+    background: #D3E3FD;
+    border-radius: 9px;
+    padding: 2px 8px;
+    font-size: 11px;
+}
+QWidget#ChatPage QLabel#ToolCardStatus[status="completed"] {
+    color: #137333;
+    background: #E6F4EA;
+}
+QWidget#ChatPage QLabel#ToolCardStatus[status="failed"],
+QWidget#ChatPage QLabel#ToolCardStatus[status="cancelled"] {
+    color: #B3261E;
+    background: #FCE8E6;
+}
+QWidget#ChatPage QLabel#ToolCardDetails {
+    color: #444746;
+    line-height: 1.5;
+}
+QWidget#ChatPage QPushButton#ToolCardButton {
+    min-height: 34px;
+    max-height: 34px;
+    padding: 0 14px;
+    border-radius: 17px;
+}
 """

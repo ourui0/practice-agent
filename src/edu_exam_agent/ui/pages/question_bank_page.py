@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import json
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QPixmap
+from PySide6.QtCore import QItemSelectionModel, Qt
+from PySide6.QtGui import QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
+    QMenu,
     QMessageBox,
     QPushButton,
     QSpinBox,
@@ -31,6 +32,8 @@ from edu_exam_agent.application.services.question_bank_service import (
     QuestionEdit,
 )
 from edu_exam_agent.infrastructure.database.models import QuestionModel
+from edu_exam_agent.ui.theme import PAGE_MARGINS
+from edu_exam_agent.ui.widgets import EmptyStateWidget, StatusLabel
 
 
 class QuestionEditDialog(QDialog):
@@ -75,9 +78,10 @@ class QuestionBankPage(QWidget):
         super().__init__()
         self._courses = courses
         self._bank = bank
-        self._questions = []
+        self._questions: list = []
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(30, 24, 30, 24)
+        left, top, right, bottom = PAGE_MARGINS
+        layout.setContentsMargins(left, top, right, bottom)
         title = QLabel("题库")
         title.setObjectName("pageTitle")
         layout.addWidget(title)
@@ -109,17 +113,24 @@ class QuestionBankPage(QWidget):
         filters.addWidget(search)
         layout.addLayout(filters)
         actions = QHBoxLayout()
-        for text, slot in (
-            ("查看详情", self._view),
-            ("编辑", self._edit),
-            ("复制", self._duplicate),
-            ("保留为可用变式", self._approve_variant),
-            ("历史版本", self._history),
-            ("删除", self._delete),
-        ):
-            button = QPushButton(text)
-            button.clicked.connect(slot)
-            actions.addWidget(button)
+        self.view_btn = QPushButton("查看详情")
+        self.view_btn.clicked.connect(self._view)
+        actions.addWidget(self.view_btn)
+        self.edit_btn = QPushButton("编辑")
+        self.edit_btn.clicked.connect(self._edit)
+        actions.addWidget(self.edit_btn)
+        self.duplicate_btn = QPushButton("复制")
+        self.duplicate_btn.clicked.connect(self._duplicate)
+        actions.addWidget(self.duplicate_btn)
+        self.approve_btn = QPushButton("保留为可用变式")
+        self.approve_btn.clicked.connect(self._approve_variant)
+        actions.addWidget(self.approve_btn)
+        self.history_btn = QPushButton("历史版本")
+        self.history_btn.clicked.connect(self._history)
+        actions.addWidget(self.history_btn)
+        self.delete_btn = QPushButton("删除")
+        self.delete_btn.clicked.connect(self._delete)
+        actions.addWidget(self.delete_btn)
         actions.addStretch(1)
         layout.addLayout(actions)
         self.table = QTableWidget(0, 7)
@@ -127,10 +138,39 @@ class QuestionBankPage(QWidget):
             ("编号", "题型", "题干", "难度", "质量", "推荐分", "状态")
         )
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table.itemSelectionChanged.connect(self._update_button_states)
+        self.table.doubleClicked.connect(self._view)
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._context_menu)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        enter_shortcut = QShortcut(QKeySequence("Return"), self.table)
+        enter_shortcut.activated.connect(self._view)
         layout.addWidget(self.table)
+        self.empty_state = EmptyStateWidget(
+            icon="📝",
+            message="题库为空，生成第一道题目",
+            action_label="去生成题目 →",
+        )
+        # Wire empty-state button to navigate (handled via parent window)
+        self.empty_state.action_button.clicked.connect(self._navigate_to_single_question)
+        self.empty_state.hide()
+        layout.addWidget(self.empty_state)
+        self.status_label = StatusLabel()
+        layout.addWidget(self.status_label)
+        self._update_button_states()
         self.reload_courses()
+
+    def _navigate_to_single_question(self) -> None:
+        window = self.window()
+        if hasattr(window, "_select_page"):
+            # Find "single" page index and switch
+            page_keys = getattr(window, "_page_keys", [])
+            for i, key in enumerate(page_keys):
+                if key == "single":
+                    window._select_page(i)
+                    return
 
     def reload_courses(self) -> None:
         current = self.course.currentData()
@@ -150,23 +190,86 @@ class QuestionBankPage(QWidget):
         self._questions = self._bank.list(self.course.currentData(), self.keyword.text(), qtype)
         self.table.setRowCount(len(self._questions))
         for row, question in enumerate(self._questions):
+            stem_text = question.stem
+            stem_display = stem_text[:60] + "…" if len(stem_text) > 60 else stem_text
             values = (
                 str(question.id),
                 question.question_type,
-                question.stem,
+                stem_display,
                 str(question.difficulty),
                 f"{question.quality_score:.0%}",
                 str(question.recommendation_score),
                 question.status,
             )
             for column, value in enumerate(values):
-                self.table.setItem(row, column, QTableWidgetItem(value))
+                item = QTableWidgetItem(value)
+                if column == 2 and len(stem_text) > 60:
+                    item.setToolTip(stem_text)
+                self.table.setItem(row, column, item)
+        has_data = len(self._questions) > 0
+        self.table.setVisible(has_data)
+        self.empty_state.setVisible(not has_data)
+        self.status_label.setText(
+            f"共 {len(self._questions)} 道题"
+            if self._questions else ""
+        )
+        self._update_button_states()
+
+    def focus_question_ids(self, question_ids: list[int]) -> None:
+        """Show and select questions created by a chat-agent task."""
+        wanted = {int(question_id) for question_id in question_ids}
+        self.course.setCurrentIndex(0)
+        self.question_type.setCurrentIndex(0)
+        self.keyword.clear()
+        self.refresh()
+        self.table.clearSelection()
+        first_row = -1
+        for row, question in enumerate(self._questions):
+            if question.id not in wanted:
+                continue
+            index = self.table.model().index(row, 0)
+            self.table.selectionModel().select(
+                index,
+                QItemSelectionModel.SelectionFlag.Select
+                | QItemSelectionModel.SelectionFlag.Rows,
+            )
+            if first_row < 0:
+                first_row = row
+        if first_row >= 0:
+            self.table.selectionModel().setCurrentIndex(
+                self.table.model().index(first_row, 0),
+                QItemSelectionModel.SelectionFlag.NoUpdate,
+            )
+            self.table.scrollToItem(self.table.item(first_row, 0))
+            self.status_label.setText(f"已定位本次生成的 {len(wanted)} 道题")
+
+    def _update_button_states(self) -> None:
+        has_selection = self.table.currentRow() >= 0
+        self.view_btn.setEnabled(has_selection)
+        self.edit_btn.setEnabled(has_selection)
+        self.duplicate_btn.setEnabled(has_selection)
+        self.approve_btn.setEnabled(has_selection)
+        self.history_btn.setEnabled(has_selection)
+        self.delete_btn.setEnabled(has_selection)
 
     def _selected(self) -> QuestionModel | None:
         row = self.table.currentRow()
         if row < 0:
-            QMessageBox.information(self, "请选择题目", "请先选择一道题目。")
+            return None
         return self._questions[row] if row >= 0 else None
+
+    def _context_menu(self, pos) -> None:
+        question = self._selected()
+        if question is None:
+            return
+        menu = QMenu(self)
+        menu.addAction("查看详情", self._view)
+        menu.addAction("编辑", self._edit)
+        menu.addAction("复制", self._duplicate)
+        menu.addAction("保留为可用变式", self._approve_variant)
+        menu.addSeparator()
+        menu.addAction("删除", self._delete)
+        menu.exec(self.table.viewport().mapToGlobal(pos))
 
     def _edit(self) -> None:
         question = self._selected()

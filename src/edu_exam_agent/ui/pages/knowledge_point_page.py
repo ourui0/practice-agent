@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -12,6 +14,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
+    QMenu,
     QMessageBox,
     QPushButton,
     QSpinBox,
@@ -28,6 +31,8 @@ from edu_exam_agent.application.services.knowledge_point_service import (
     KnowledgePointService,
 )
 from edu_exam_agent.infrastructure.database.models import KnowledgePointModel
+from edu_exam_agent.ui.theme import PAGE_MARGINS
+from edu_exam_agent.ui.widgets import EmptyStateWidget, StatusLabel
 
 
 class KnowledgePointDialog(QDialog):
@@ -80,7 +85,8 @@ class KnowledgePointPage(QWidget):
         self._service = points
         self._points: list[KnowledgePointModel] = []
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(32, 26, 32, 26)
+        left, top, right, bottom = PAGE_MARGINS
+        layout.setContentsMargins(left, top, right, bottom)
         title = QLabel("知识点管理")
         title.setObjectName("pageTitle")
         layout.addWidget(title)
@@ -89,28 +95,51 @@ class KnowledgePointPage(QWidget):
         self.course = QComboBox()
         self.course.currentIndexChanged.connect(self.refresh)
         toolbar.addWidget(self.course, 1)
-        for text, slot in (
-            ("从教材提取知识点", self._extract),
-            ("确认全部候选", self._confirm_all),
-            ("手动添加", self._create),
-            ("编辑并确认", self._edit),
-            ("确认选中", self._confirm),
-            ("删除", self._delete),
-        ):
-            button = QPushButton(text)
-            button.clicked.connect(slot)
-            toolbar.addWidget(button)
+        self.extract_btn = QPushButton("从教材提取知识点")
+        self.extract_btn.clicked.connect(self._extract)
+        toolbar.addWidget(self.extract_btn)
+        self.confirm_all_btn = QPushButton("确认全部候选")
+        self.confirm_all_btn.clicked.connect(self._confirm_all)
+        toolbar.addWidget(self.confirm_all_btn)
+        self.create_btn = QPushButton("手动添加")
+        self.create_btn.clicked.connect(self._create)
+        toolbar.addWidget(self.create_btn)
+        self.edit_btn = QPushButton("编辑并确认")
+        self.edit_btn.clicked.connect(self._edit)
+        toolbar.addWidget(self.edit_btn)
+        self.confirm_btn = QPushButton("确认选中")
+        self.confirm_btn.clicked.connect(self._confirm)
+        toolbar.addWidget(self.confirm_btn)
+        self.delete_btn = QPushButton("删除")
+        self.delete_btn.clicked.connect(self._delete)
+        toolbar.addWidget(self.delete_btn)
         layout.addLayout(toolbar)
         self.table = QTableWidget(0, 7)
         self.table.setHorizontalHeaderLabels(
             ("知识点", "状态", "来源", "页码", "重要度", "难度", "推荐题型")
         )
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table.itemSelectionChanged.connect(self._update_button_states)
+        self.table.doubleClicked.connect(self._edit)
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._context_menu)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        enter_shortcut = QShortcut(QKeySequence("Return"), self.table)
+        enter_shortcut.activated.connect(self._edit)
         layout.addWidget(self.table)
-        self.status = QLabel()
-        layout.addWidget(self.status)
+        self.empty_state = EmptyStateWidget(
+            icon="🏷",
+            message="还没有知识点，从教材中自动提取或手动添加",
+            action_label="从教材提取知识点",
+        )
+        self.empty_state.action_button.clicked.connect(self._extract)
+        self.empty_state.hide()
+        layout.addWidget(self.empty_state)
+        self.status_label = StatusLabel()
+        layout.addWidget(self.status_label)
+        self._update_button_states()
         self.reload_courses()
 
     def reload_courses(self) -> None:
@@ -142,19 +171,41 @@ class KnowledgePointPage(QWidget):
             )
             for column, value in enumerate(values):
                 self.table.setItem(row, column, QTableWidgetItem(value))
+        has_data = len(self._points) > 0
+        self.table.setVisible(has_data)
+        self.empty_state.setVisible(not has_data)
+        self._update_button_states()
+
+    def _update_button_states(self) -> None:
+        has_selection = self.table.currentRow() >= 0
+        self.edit_btn.setEnabled(has_selection)
+        self.confirm_btn.setEnabled(has_selection)
+        self.delete_btn.setEnabled(has_selection)
 
     def _selected(self) -> KnowledgePointModel | None:
         row = self.table.currentRow()
         if row < 0:
-            QMessageBox.information(self, "请选择知识点", "请先选择一条知识点。")
+            return None
         return self._points[row] if row >= 0 else None
+
+    def _context_menu(self, pos) -> None:
+        point = self._selected()
+        if point is None:
+            return
+        menu = QMenu(self)
+        menu.addAction("编辑并确认", self._edit)
+        if point.status != "confirmed":
+            menu.addAction("确认选中", self._confirm)
+        menu.addSeparator()
+        menu.addAction("删除", self._delete)
+        menu.exec(self.table.viewport().mapToGlobal(pos))
 
     def _extract(self) -> None:
         course_id = self.course.currentData()
         if course_id:
             count = self._service.extract_candidates(course_id)
             self.refresh()
-            self.status.setText(f"新增 {count} 条有效知识点，已可直接用于生成题目。")
+            self.status_label.setText(f"新增 {count} 条有效知识点，已可直接用于生成题目。")
 
     def _create(self) -> None:
         dialog = KnowledgePointDialog(parent=self)
@@ -167,7 +218,7 @@ class KnowledgePointPage(QWidget):
         if course_id:
             count = self._service.confirm_all_candidates(course_id)
             self.refresh()
-            self.status.setText(f"已确认 {count} 条有效候选知识点，可用于单题生成。")
+            self.status_label.setText(f"已确认 {count} 条有效候选知识点，可用于单题生成。")
 
     def _edit(self) -> None:
         point = self._selected()

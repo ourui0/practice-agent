@@ -18,6 +18,12 @@ EduExam Agent 是面向教师的 Windows 桌面应用，用于在教材边界内
 - Pydantic 2.x
 - pytest、Ruff
 
+## Windows 安装
+
+普通用户请从项目发布页下载 `EduExamAgent-Setup-<版本号>.exe`。安装程序默认安装到当前用户目录，不需要管理员权限，并会创建开始菜单入口。教师数据保存在 `%APPDATA%\EduExamAgent`，覆盖安装新版本不会清除既有数据。
+
+当前首版安装程序尚未进行商业代码签名，Windows 首次运行时可能显示“未知发布者”。请只从本项目的正式发布页下载安装包。
+
 ## 从零运行（Windows PowerShell）
 
 ```powershell
@@ -32,6 +38,16 @@ py -3.12 -m venv .venv
 ```powershell
 .\.venv\Scripts\python.exe -m pytest
 ```
+
+制作 Windows 安装程序（维护者）：
+
+```powershell
+py -3.12 -m venv .release-venv
+.\.release-venv\Scripts\python.exe -m pip install -e ".[dev,release]"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build_windows.ps1
+```
+
+需要预先安装 Inno Setup 6。构建完成后，安装程序位于 `release` 目录。
 
 应用数据默认写入 `%APPDATA%\EduExamAgent`，不会写入安装目录。配置文件首次启动时由应用创建，敏感密钥不会写入普通配置文件。
 

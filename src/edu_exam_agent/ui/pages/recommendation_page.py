@@ -1,8 +1,9 @@
 """High-scoring recommendations presented as breathable Material cards."""
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QPropertyAnimation, Qt, QTimer
 from PySide6.QtWidgets import (
     QComboBox,
+    QGraphicsOpacityEffect,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -15,7 +16,8 @@ from PySide6.QtWidgets import (
 
 from edu_exam_agent.application.services.course_service import CourseService
 from edu_exam_agent.application.services.question_bank_service import QuestionBankService
-from edu_exam_agent.ui.widgets import GlowCard
+from edu_exam_agent.ui.theme import ANIMATION_DURATION_NORMAL, PAGE_MARGINS
+from edu_exam_agent.ui.widgets import EmptyStateWidget, GlowCard, StatusLabel
 
 
 class RealRecommendationPage(QWidget):
@@ -25,7 +27,8 @@ class RealRecommendationPage(QWidget):
         self._bank = bank
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(42, 34, 42, 30)
+        left, top, right, bottom = PAGE_MARGINS
+        layout.setContentsMargins(left, top, right, bottom)
         layout.setSpacing(18)
 
         title = QLabel("智能推荐")
@@ -55,15 +58,16 @@ class RealRecommendationPage(QWidget):
         self.minimum.valueChanged.connect(
             lambda value: self.minimum_value.setText(f"最低综合分  {value}")
         )
-        button = QPushButton("推荐高分题目")
-        button.setProperty("primary", True)
-        button.clicked.connect(self.refresh)
+        self.recommend_btn = QPushButton("推荐高分题目")
+        self.recommend_btn.setProperty("primary", True)
+        self.recommend_btn.clicked.connect(self.refresh)
+        self.recommend_btn.setAccessibleName("推荐高分题目")
         filter_layout.addWidget(QLabel("课程"))
         filter_layout.addWidget(self.course)
         filter_layout.addWidget(self.minimum_value)
         filter_layout.addWidget(self.minimum, 1)
         filter_layout.addWidget(self.difficulty)
-        filter_layout.addWidget(button)
+        filter_layout.addWidget(self.recommend_btn)
         layout.addWidget(filters)
 
         self.scroll = QScrollArea()
@@ -79,10 +83,33 @@ class RealRecommendationPage(QWidget):
         self.card_layout.addStretch(1)
         self.scroll.setWidget(self.card_host)
         layout.addWidget(self.scroll, 1)
-        self.status = QLabel()
-        self.status.setObjectName("secondaryText")
-        layout.addWidget(self.status)
+        self.empty_state = EmptyStateWidget(
+            icon="💡",
+            message="题库中还没有题目，先生成一些题目再来查看推荐",
+            action_label="去生成题目 →",
+        )
+        self.empty_state.action_button.clicked.connect(self._navigate_to_single_question)
+        self.empty_state.hide()
+        layout.addWidget(self.empty_state)
+        self.status_label = StatusLabel()
+        layout.addWidget(self.status_label)
+        self._update_button_states()
         self.reload_courses()
+
+    def _navigate_to_single_question(self) -> None:
+        window = self.window()
+        if hasattr(window, "_select_page"):
+            page_keys = getattr(window, "_page_keys", [])
+            for i, key in enumerate(page_keys):
+                if key == "single":
+                    window._select_page(i)
+                    return
+            # Fallback: try index
+            window._select_page(1)
+
+    def _update_button_states(self) -> None:
+        has_course = self.course.currentData() is not None
+        self.recommend_btn.setEnabled(has_course)
 
     def reload_courses(self) -> None:
         current = self.course.currentData()
@@ -101,16 +128,66 @@ class RealRecommendationPage(QWidget):
             difficulty=self.difficulty.value(),
             minimum_score=self.minimum.value(),
         )
+        # Use a generation counter so stale timer callbacks (from a previous
+        # refresh) bail out instead of animating already-deleted cards.
+        self._card_generation = getattr(self, '_card_generation', 0) + 1
+        captured_gen = self._card_generation
+
         while self.card_layout.count() > 1:
             item = self.card_layout.takeAt(0)
             widget = item.widget()
             if widget is not None:
                 widget.deleteLater()
-        for question in questions:
-            self.card_layout.insertWidget(
-                self.card_layout.count() - 1, self._question_card(question)
+        has_data = len(questions) > 0
+        self.scroll.setVisible(has_data)
+        self.empty_state.setVisible(not has_data and self.course.currentData() is not None)
+        for i, question in enumerate(questions):
+            card = self._question_card(question)
+            # Staggered fade-in animation
+            card_effect = QGraphicsOpacityEffect(card)
+            card_effect.setOpacity(0.0)
+            card.setGraphicsEffect(card_effect)
+            anim = QPropertyAnimation(card_effect, b"opacity")
+            anim.setDuration(ANIMATION_DURATION_NORMAL)
+            anim.setStartValue(0.0)
+            anim.setEndValue(1.0)
+            QTimer.singleShot(
+                i * 50,
+                lambda a=anim, c=card, e=card_effect, gen=captured_gen, s=self:
+                    s._start_card_anim(a, c, e, gen),
             )
-        self.status.setText(f"已推荐 {len(questions)} 道题，按综合得分从高到低排列。")
+            self.card_layout.insertWidget(
+                self.card_layout.count() - 1, card
+            )
+        self.status_label.setText(
+            f"已推荐 {len(questions)} 道题，按综合得分从高到低排列。"
+            if questions else ""
+        )
+
+    def _start_card_anim(
+        self,
+        anim: QPropertyAnimation,
+        card: GlowCard,
+        effect: QGraphicsOpacityEffect,
+        generation: int,
+    ) -> None:
+        # Guard: if a newer refresh() has already run, the card may be
+        # queued for deletion — bail out silently.
+        if getattr(self, '_card_generation', 0) != generation:
+            return
+        try:
+            _ = card.isVisible()
+        except RuntimeError:
+            return
+
+        def _finish() -> None:
+            try:
+                card.setGraphicsEffect(None)
+            except RuntimeError:
+                pass
+
+        anim.finished.connect(_finish)
+        anim.start()
 
     @staticmethod
     def _question_card(question) -> GlowCard:  # type: ignore[no-untyped-def]

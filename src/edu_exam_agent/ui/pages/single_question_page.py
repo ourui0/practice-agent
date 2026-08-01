@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QFormLayout,
     QGroupBox,
+    QHBoxLayout,
     QLabel,
     QMessageBox,
     QPushButton,
@@ -27,6 +28,8 @@ from edu_exam_agent.application.services.question_agent import (
     QuestionGenerationAgent,
 )
 from edu_exam_agent.infrastructure.retrieval import FtsRetriever
+from edu_exam_agent.ui.theme import PAGE_MARGINS
+from edu_exam_agent.ui.widgets import StatusLabel
 
 
 class QuestionWorker(QObject):
@@ -61,10 +64,12 @@ class SingleQuestionPage(QWidget):
         self._providers = providers
         self._retriever = retriever
         self._engine = engine
-        self._thread = None
-        self._worker = None
+        self._thread: QThread | None = None
+        self._worker: QuestionWorker | None = None
+        self._generating = False
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(34, 26, 34, 26)
+        left, top, right, bottom = PAGE_MARGINS
+        layout.setContentsMargins(left, top, right, bottom)
         title = QLabel("单题生成")
         title.setObjectName("pageTitle")
         layout.addWidget(title)
@@ -72,11 +77,14 @@ class SingleQuestionPage(QWidget):
         form = QFormLayout(box)
         self.course = QComboBox()
         self.course.currentIndexChanged.connect(self._reload_points)
+        self.course.setAccessibleName("课程选择")
         self.point = QComboBox()
+        self.point.setAccessibleName("知识点选择")
         self.question_type = QComboBox()
         self.question_type.addItems(
             ("单项选择题", "多项选择题", "判断题", "填空题", "简答题", "计算题", "应用题")
         )
+        self.question_type.setAccessibleName("题型选择")
         self.difficulty = QSpinBox()
         self.difficulty.setRange(1, 5)
         self.difficulty.setValue(3)
@@ -89,11 +97,19 @@ class SingleQuestionPage(QWidget):
         form.addRow("难度", self.difficulty)
         form.addRow("分值", self.score)
         layout.addWidget(box)
+        button_row = QHBoxLayout()
         self.generate_button = QPushButton("根据教材生成并检查")
-        self.generate_button.clicked.connect(self._generate)
-        layout.addWidget(self.generate_button)
-        self.status = QLabel("严格教材模式：没有教材依据时不会生成。")
-        layout.addWidget(self.status)
+        self.generate_button.clicked.connect(self._toggle_generation)
+        self.generate_button.setAccessibleName("根据教材生成并检查")
+        button_row.addWidget(self.generate_button)
+        self.cancel_button = QPushButton("取消")
+        self.cancel_button.clicked.connect(self._cancel_generation)
+        self.cancel_button.hide()
+        button_row.addWidget(self.cancel_button)
+        button_row.addStretch(1)
+        layout.addLayout(button_row)
+        self.status_label = StatusLabel("严格教材模式：没有教材依据时不会生成。")
+        layout.addWidget(self.status_label)
         self.preview = QTextEdit()
         self.preview.setReadOnly(True)
         self.figure = QLabel()
@@ -124,13 +140,19 @@ class SingleQuestionPage(QWidget):
                 if point.status == "confirmed" and point.is_enabled:
                     self.point.addItem(point.name)
         if self.point.count() == 0:
-            self.status.setText(
+            self.status_label.setText(
                 "当前课程没有已确认知识点。请先提取知识点，并在知识点管理中确认。"
             )
             self.generate_button.setEnabled(False)
         else:
-            self.status.setText("严格教材模式：没有教材依据时不会生成。")
+            self.status_label.setText("严格教材模式：没有教材依据时不会生成。")
             self.generate_button.setEnabled(True)
+
+    def _toggle_generation(self) -> None:
+        if self._generating:
+            self._cancel_generation()
+        else:
+            self._generate()
 
     def _generate(self) -> None:
         if not self.point.currentText():
@@ -160,12 +182,29 @@ class SingleQuestionPage(QWidget):
         self._worker.failed.connect(self._thread.quit)
         self._thread.finished.connect(self._worker.deleteLater)
         self._thread.finished.connect(self._thread.deleteLater)
-        self.generate_button.setEnabled(False)
-        self.status.setText("正在检索教材并生成题目……")
+        self._generating = True
+        self.generate_button.setText("取消生成")
+        self.generate_button.setProperty("primary", False)
+        self.generate_button.style().unpolish(self.generate_button)
+        self.generate_button.style().polish(self.generate_button)
+        self.cancel_button.hide()
+        self.status_label.setText("正在检索教材并生成题目……")
         self._thread.start()
+
+    def _cancel_generation(self) -> None:
+        if self._thread is not None and self._thread.isRunning():
+            self._thread.quit()
+            self._thread.wait(1000)
+        self._generating = False
+        self.generate_button.setText("根据教材生成并检查")
+        self.generate_button.setEnabled(True)
+        self.status_label.setText("操作已取消。")
+        self._thread = None
+        self._worker = None
 
     @Slot(object)
     def _show_result(self, result: GenerationResult) -> None:
+        self._generating = False
         q = result.question
         options = "\n".join(f"{x.label}. {x.content}" for x in q.options)
         evidence = "\n".join(
@@ -202,11 +241,14 @@ class SingleQuestionPage(QWidget):
         else:
             self.figure.clear()
             self.figure.hide()
-        self.status.setText(f"题目已保存，编号 {result.question_id}。")
+        self.generate_button.setText("根据教材生成并检查")
         self.generate_button.setEnabled(True)
+        self.status_label.setText(f"题目已保存，编号 {result.question_id}。")
 
     @Slot(str)
     def _show_error(self, message: str) -> None:
-        self.status.setText("生成失败，未保存无效题目。")
+        self._generating = False
+        self.generate_button.setText("根据教材生成并检查")
         self.generate_button.setEnabled(True)
+        self.status_label.setText("生成失败，未保存无效题目。")
         QMessageBox.warning(self, "生成失败", message)

@@ -6,9 +6,17 @@ __pycache__/
 .coverage
 htmlcov/
 .venv/
+.release-venv/
 build/
 dist/
+release/
+output/
+tmp/
+.claude/
+scripts/launch_app.ps1
+scripts/launch_app.vbs
 *.spec
+!packaging/*.spec
 .env
 *.db
 *.sqlite3

@@ -15,6 +15,8 @@ from PySide6.QtWidgets import (
 )
 
 from edu_exam_agent.application.services.provider_service import ProviderService
+from edu_exam_agent.ui.theme import PAGE_MARGINS
+from edu_exam_agent.ui.widgets import StatusLabel
 
 
 class ConnectionTestWorker(QObject):
@@ -40,7 +42,8 @@ class ModelSettingsPage(QWidget):
         self._test_thread = None
         self._test_worker = None
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(36, 28, 36, 28)
+        left, top, right, bottom = PAGE_MARGINS
+        layout.setContentsMargins(left, top, right, bottom)
         title = QLabel("模型设置")
         title.setObjectName("pageTitle")
         layout.addWidget(title)
@@ -66,8 +69,8 @@ class ModelSettingsPage(QWidget):
         self.test_button.clicked.connect(self._test)
         layout.addWidget(save)
         layout.addWidget(self.test_button)
-        self.status = QLabel()
-        layout.addWidget(self.status)
+        self.status_label = StatusLabel()
+        layout.addWidget(self.status_label)
         history_label = QLabel("安全操作记录（不包含 API Key）")
         history_label.setStyleSheet("font-weight: 600; margin-top: 12px;")
         layout.addWidget(history_label)
@@ -84,7 +87,7 @@ class ModelSettingsPage(QWidget):
             self.base_url.setText(config.base_url)
             self.model.setText(config.model_name)
             message = "API Key 已安全保存。" if config.has_api_key else "尚未保存 API Key。"
-            self.status.setText(message)
+            self.status_label.setText(message)
         self._reload_history()
 
     def _save(self) -> None:
@@ -93,14 +96,14 @@ class ModelSettingsPage(QWidget):
                 self.provider.text(), self.base_url.text(), self.model.text(), self.api_key.text()
             )
             self.api_key.clear()
-            self.status.setText("配置已保存，API Key 已加密。")
+            self.status_label.setText("配置已保存，API Key 已加密。")
             self._reload_history()
         except Exception as exc:
             QMessageBox.warning(self, "保存失败", str(exc))
 
     def _test(self) -> None:
         self.test_button.setEnabled(False)
-        self.status.setText("正在后台测试连接，界面仍可继续使用……")
+        self.status_label.setText("正在后台测试连接，界面仍可继续使用……")
         self._test_thread = QThread(self)
         self._test_worker = ConnectionTestWorker(self._service)
         self._test_worker.moveToThread(self._test_thread)
@@ -120,7 +123,7 @@ class ModelSettingsPage(QWidget):
             if self.model.text() in models
             else "连接成功，但模型列表中未找到目标模型。"
         )
-        self.status.setText(message)
+        self.status_label.setText(message)
         self.test_button.setEnabled(True)
         self._reload_history()
 

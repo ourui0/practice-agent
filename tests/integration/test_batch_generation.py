@@ -102,3 +102,35 @@ def test_batch_generation_honors_exact_type_shortages() -> None:
     assert agent.types == ["填空题", "应用题", "应用题"]
     assert result.created_ids == (1, 2, 3)
     assert result.errors == ()
+
+
+def test_batch_generation_can_be_cancelled_between_questions() -> None:
+    class RecordingAgent:
+        def __init__(self) -> None:
+            self.count = 0
+
+        def generate(self, request):  # type: ignore[no-untyped-def]
+            self.count += 1
+            return SimpleNamespace(question_id=self.count)
+
+    agent = RecordingAgent()
+    cancel = {"value": False}
+
+    def progress(completed: int, _target: int, _stage: str) -> None:
+        if completed == 0:
+            cancel["value"] = True
+
+    result = BatchQuestionGenerationService(agent).generate(  # type: ignore[arg-type]
+        BatchGenerationRequest(
+            course_id=1,
+            knowledge_points=("一次函数",),
+            question_types=("填空题",),
+            count=3,
+            difficulty=3,
+        ),
+        lambda: cancel["value"],
+        progress,
+    )
+
+    assert result.cancelled
+    assert result.created_ids == (1,)

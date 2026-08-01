@@ -29,6 +29,8 @@ from edu_exam_agent.application.services.course_service import CourseService
 from edu_exam_agent.application.services.document_service import DocumentDescriptor, DocumentService
 from edu_exam_agent.infrastructure.database.models import DocumentModel
 from edu_exam_agent.infrastructure.retrieval import FtsRetriever
+from edu_exam_agent.ui.theme import PAGE_MARGINS
+from edu_exam_agent.ui.widgets import EmptyStateWidget, StatusLabel
 
 
 class MaterialImportWorker(QObject):
@@ -102,7 +104,8 @@ class MaterialPage(QWidget):
         self._documents: list[DocumentModel] = []
         self._descriptors: list[DocumentDescriptor] = []
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(32, 26, 32, 26)
+        left, top, right, bottom = PAGE_MARGINS
+        layout.setContentsMargins(left, top, right, bottom)
         title = QLabel("教材管理")
         title.setObjectName("pageTitle")
         layout.addWidget(title)
@@ -110,14 +113,14 @@ class MaterialPage(QWidget):
         toolbar = QHBoxLayout()
         toolbar.addWidget(QLabel("当前课程"))
         self.course = QComboBox()
-        self.course.currentIndexChanged.connect(self.refresh)
+        self.course.currentIndexChanged.connect(self._on_course_changed)
         toolbar.addWidget(self.course, 1)
-        upload = QPushButton("上传并解析教材")
-        upload.clicked.connect(self._upload)
-        toolbar.addWidget(upload)
-        delete = QPushButton("删除教材")
-        delete.clicked.connect(self._delete)
-        toolbar.addWidget(delete)
+        self.upload_btn = QPushButton("上传并解析教材")
+        self.upload_btn.clicked.connect(self._upload)
+        toolbar.addWidget(self.upload_btn)
+        self.delete_btn = QPushButton("删除教材")
+        self.delete_btn.clicked.connect(self._delete)
+        toolbar.addWidget(self.delete_btn)
         layout.addLayout(toolbar)
 
         repair_bar = QHBoxLayout()
@@ -151,6 +154,7 @@ class MaterialPage(QWidget):
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.itemSelectionChanged.connect(self._load_chapters)
+        self.table.itemSelectionChanged.connect(self._update_button_states)
         self.chapters = QTreeWidget()
         self.chapters.setHeaderLabels(("解析后的章节", "起始页", "状态"))
         splitter.addWidget(self.table)
@@ -162,7 +166,7 @@ class MaterialPage(QWidget):
         self.search_text.setPlaceholderText("输入教材关键词，例如：平行线、一次函数")
         self.search_text.returnPressed.connect(self._search)
         search_bar.addWidget(self.search_text, 1)
-        search_button = QPushButton("检索教材原文")
+        search_button = QPushButton("搜索教材内容")
         search_button.clicked.connect(self._search)
         search_bar.addWidget(search_button)
         layout.addLayout(search_bar)
@@ -172,15 +176,34 @@ class MaterialPage(QWidget):
         self.results.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.results.setMaximumHeight(190)
         layout.addWidget(self.results)
-        self.status = QLabel("支持 PDF、DOCX、TXT 和 Markdown。")
-        layout.addWidget(self.status)
+        self.empty_state = EmptyStateWidget(
+            icon="📚",
+            message="还没有教材，上传第一本教材开始使用",
+            action_label="上传并解析教材",
+        )
+        self.empty_state.action_button.clicked.connect(self._upload)
+        self.empty_state.hide()
+        layout.addWidget(self.empty_state)
+        self.status_label = StatusLabel("支持 PDF、DOCX、TXT 和 Markdown。")
+        layout.addWidget(self.status_label)
         self.cancel_button = QPushButton("取消解析")
         self.cancel_button.setEnabled(False)
         self.cancel_button.clicked.connect(self._cancel_import)
         layout.addWidget(self.cancel_button)
         self._thread: QThread | None = None
         self._worker: MaterialImportWorker | MaterialReparseWorker | None = None
+        self._update_button_states()
         self.reload_courses()
+
+    def _on_course_changed(self) -> None:
+        self._update_button_states()
+        self.refresh()
+
+    def _update_button_states(self) -> None:
+        has_course = self.course.currentData() is not None
+        self.upload_btn.setEnabled(has_course)
+        has_selection = self.table.currentRow() >= 0
+        self.delete_btn.setEnabled(has_selection)
 
     def reload_courses(self) -> None:
         self._courses = self._course_service.list()
@@ -226,8 +249,12 @@ class MaterialPage(QWidget):
                     item.setForeground(Qt.GlobalColor.red)
                 self.table.setItem(row, column, item)
         self.chapters.clear()
+        has_data = len(self._descriptors) > 0
+        self.table.setVisible(has_data or not self._courses)
+        self.empty_state.setVisible(not has_data and bool(self._courses))
         if not self._courses:
-            self.status.setText("请先在课程管理中创建课程。")
+            self.status_label.setText("请先在课程管理中创建课程。")
+        self._update_button_states()
 
     def _upload(self) -> None:
         course_id = self.course.currentData()
@@ -243,7 +270,7 @@ class MaterialPage(QWidget):
         self._worker = MaterialImportWorker(self._document_service, course_id, filenames)
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
-        self._worker.progress.connect(self.status.setText)
+        self._worker.progress.connect(self.status_label.setText)
         self._worker.failed.connect(self._show_import_error)
         self._worker.finished.connect(self._import_finished)
         self._worker.finished.connect(self._thread.quit)
@@ -258,7 +285,7 @@ class MaterialPage(QWidget):
 
     @Slot()
     def _import_finished(self) -> None:
-        self.status.setText("教材解析任务已结束。")
+        self.status_label.setText("教材解析任务已结束。")
         self.cancel_button.setEnabled(False)
         self.refresh()
         self._worker = None
@@ -267,7 +294,7 @@ class MaterialPage(QWidget):
     def _cancel_import(self) -> None:
         if self._worker is not None:
             self._worker.cancel()
-            self.status.setText("正在取消；当前文件完成后停止。")
+            self.status_label.setText("正在取消；当前文件完成后停止。")
 
     def _selected_document(self) -> DocumentModel | None:
         row = self.table.currentRow()
@@ -332,7 +359,7 @@ class MaterialPage(QWidget):
         except ValueError as exc:
             QMessageBox.warning(self, "重新定位失败", str(exc))
             return
-        self.status.setText("教材文件已重新定位，原解析和题目来源保持不变。")
+        self.status_label.setText("教材文件已重新定位，原解析和题目来源保持不变。")
         self.refresh()
 
     def _replace(self) -> None:
@@ -352,7 +379,7 @@ class MaterialPage(QWidget):
             QMessageBox.question(
                 self,
                 "确认替换",
-                "将使用新文件重新识别目录和文本索引。旧解析会作为历史快照保留，"
+                "将使用新文件重新识别目录和教材内容。旧解析会作为历史快照保留，"
                 "不会破坏已有题目的教材来源。是否继续？",
             )
             != QMessageBox.StandardButton.Yes
@@ -391,13 +418,13 @@ class MaterialPage(QWidget):
         worker.finished.connect(self._thread.quit)
         self._thread.finished.connect(worker.deleteLater)
         self._thread.finished.connect(self._thread.deleteLater)
-        self.status.setText("正在解析教材并重建目录与检索索引……")
+        self.status_label.setText("正在解析教材并重建目录与搜索索引……")
         self.cancel_button.setEnabled(False)
         self._thread.start()
 
     @Slot(bool)
     def _reparse_finished(self, succeeded: bool) -> None:
-        self.status.setText(
+        self.status_label.setText(
             "教材解析和索引重建完成。" if succeeded else "教材解析失败，原解析仍然保留。"
         )
         self.refresh()
@@ -431,7 +458,7 @@ class MaterialPage(QWidget):
         except ValueError as exc:
             QMessageBox.warning(self, "目录校正失败", str(exc))
             return
-        self.status.setText("目录项已校正，章节选择器和检索索引已同步更新。")
+        self.status_label.setText("目录项已校正，章节选择器和搜索索引已同步更新。")
         self._load_chapters()
 
     def _toggle_chapter(self) -> None:
@@ -446,7 +473,7 @@ class MaterialPage(QWidget):
         except ValueError as exc:
             QMessageBox.warning(self, "目录调整失败", str(exc))
             return
-        self.status.setText("目录使用状态已更新。")
+        self.status_label.setText("目录使用状态已更新。")
         self.refresh()
 
     def _delete(self) -> None:
@@ -468,7 +495,7 @@ class MaterialPage(QWidget):
         try:
             matches = self._retriever.search(self.search_text.text(), course_id)
         except ValueError as exc:
-            self.status.setText(str(exc))
+            self.status_label.setText(str(exc))
             return
         self.results.setRowCount(len(matches))
         for row, match in enumerate(matches):
@@ -480,4 +507,4 @@ class MaterialPage(QWidget):
             values = (match.document_name, match.chapter_title, page, match.excerpt)
             for column, value in enumerate(values):
                 self.results.setItem(row, column, QTableWidgetItem(value))
-        self.status.setText(f"找到 {len(matches)} 条教材依据。")
+        self.status_label.setText(f"找到 {len(matches)} 条教材依据。")
